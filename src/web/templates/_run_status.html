@@ -58,6 +58,34 @@
     </div>
     {% endif %}
 
+    {% if tokens and tokens.calls %}
+    <h3>Tokens used</h3>
+    <div class="tokens-summary">
+        <span class="tok-big">{{ "{:,}".format(tokens.total) }}</span>
+        <span class="dim">total</span>
+        <span class="sep">·</span>
+        <span>{{ "{:,}".format(tokens.prompt) }} in</span>
+        <span class="sep">+</span>
+        <span>{{ "{:,}".format(tokens.completion) }} out</span>
+        <span class="sep">·</span>
+        <span>{{ tokens.calls }} call{{ "s" if tokens.calls != 1 else "" }}</span>
+    </div>
+    {% if tokens.by_model %}
+    <table class="token-breakdown">
+        <thead><tr><th>Model</th><th>Calls</th><th>Tokens</th></tr></thead>
+        <tbody>
+            {% for m in tokens.by_model %}
+            <tr>
+                <td><code>{{ m.model }}</code></td>
+                <td class="num">{{ m.calls }}</td>
+                <td class="num">{{ "{:,}".format(m.total) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+    {% endif %}
+
     <h3>Live log</h3>
     {% if log_text %}
     <pre class="log-panel">{{ log_text }}</pre>

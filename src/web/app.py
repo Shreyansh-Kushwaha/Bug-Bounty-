@@ -28,8 +28,10 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from src.models.router import MODEL_DAILY_LIMITS
 from src.store.audit import AuditLog
 from src.store.findings import FindingsStore
+from src.store.usage import UsageStore
 from src.web.runner import RunManager
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -94,6 +96,33 @@ def _clean_log(text: str) -> str:
     return _RICH_MARKUP.sub("", text)
 
 
+def _quota_rows() -> list[dict]:
+    """Today's per-model usage with limit annotation for the home page widget."""
+    store = UsageStore(DB_PATH)
+    rows = store.today_by_model()
+    store.close()
+    out = []
+    for r in rows:
+        limit = MODEL_DAILY_LIMITS.get(r["model"])
+        pct = (r["calls"] / limit * 100) if limit else None
+        out.append({
+            **r,
+            "limit": limit,
+            "pct": pct,
+            "warn": pct is not None and pct >= 75,
+        })
+    # Also surface known-limit models that have zero usage today
+    seen = {r["model"] for r in out}
+    for model, limit in MODEL_DAILY_LIMITS.items():
+        if model not in seen:
+            out.append({
+                "model": model, "calls": 0, "prompt": 0,
+                "completion": 0, "total": 0,
+                "limit": limit, "pct": 0, "warn": False,
+            })
+    return out
+
+
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
     data = _load_targets()
@@ -103,6 +132,7 @@ def home(request: Request):
         {
             "targets": data["authorized_targets"],
             "runs": manager.list_runs()[:20],
+            "quota": _quota_rows(),
         },
     )
 
@@ -167,6 +197,9 @@ def _render_run_context(request: Request, run_id: str, template: str):
         raise HTTPException(404, "Unknown run")
     artifacts = manager.list_artifacts(run_id)
     log_text = _clean_log(manager.log_tail(run_id))
+    usage = UsageStore(DB_PATH)
+    tokens = usage.run_totals(run_id)
+    usage.close()
     return templates.TemplateResponse(
         request,
         template,
@@ -175,6 +208,7 @@ def _render_run_context(request: Request, run_id: str, template: str):
             "artifacts": artifacts,
             "run_id": run_id,
             "log_text": log_text,
+            "tokens": tokens,
         },
     )
 

@@ -45,6 +45,33 @@
 </section>
 
 <section class="card">
+    <h2>Today's LLM usage <small class="dim">· UTC</small></h2>
+    {% if quota %}
+    <table class="quota">
+        <thead><tr><th>Model</th><th>Requests today</th><th>Tokens</th></tr></thead>
+        <tbody>
+            {% for q in quota %}
+            <tr class="{% if q.warn %}warn{% endif %}">
+                <td><code>{{ q.model }}</code></td>
+                <td>
+                    {% if q.limit %}
+                        <strong>{{ q.calls }}/{{ q.limit }}</strong>
+                        <div class="bar"><span style="width: {{ q.pct|round(0) }}%"></span></div>
+                    {% else %}
+                        {{ q.calls }}
+                    {% endif %}
+                </td>
+                <td class="num">{{ "{:,}".format(q.total) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="dim">No usage recorded yet today.</p>
+    {% endif %}
+</section>
+
+<section class="card">
     <h2>Recent runs</h2>
     {% if runs %}
     <table class="runs">

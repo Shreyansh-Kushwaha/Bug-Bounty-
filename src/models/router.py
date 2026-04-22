@@ -14,7 +14,7 @@ import os
 import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -32,10 +32,57 @@ class LLMResponse:
     text: str
     provider: str
     model: str
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
 
 
 class AllProvidersExhausted(RuntimeError):
     pass
+
+
+# Hardcoded Gemini free-tier daily request limits on this project's API key.
+# Update as Google revises them — see CLAUDE.md. Missing keys mean "no limit
+# enforced / unknown".
+MODEL_DAILY_LIMITS: dict[str, int] = {
+    "gemini-2.5-flash-lite": 20,
+    "gemini-2.5-flash": 50,
+    "gemini-3-flash-preview": 50,
+}
+
+
+def _get_usage_store():
+    """Lazy import so the CLI doesn't pay for it unless used."""
+    from src.store.usage import UsageStore
+    root = Path(__file__).resolve().parent.parent.parent
+    return UsageStore(root / "data" / "findings.db")
+
+
+_usage_store_singleton = None
+
+
+def _usage_store():
+    global _usage_store_singleton
+    if _usage_store_singleton is None:
+        _usage_store_singleton = _get_usage_store()
+    return _usage_store_singleton
+
+
+def _record_usage(resp: LLMResponse) -> None:
+    """Write a usage row. Failures here must never break the LLM call."""
+    try:
+        from src.current_run import get_run_id
+        _usage_store().record(
+            run_id=get_run_id(),
+            provider=resp.provider,
+            model=resp.model,
+            prompt_tokens=resp.prompt_tokens,
+            completion_tokens=resp.completion_tokens,
+            total_tokens=resp.total_tokens,
+        )
+    except Exception:  # noqa: BLE001
+        # Telemetry shouldn't crash the pipeline. Swallow silently.
+        pass
 
 
 class _Provider:
@@ -86,7 +133,17 @@ class GeminiProvider(_Provider):
                     contents=prompt,
                     config=config,
                 )
-                return LLMResponse(text=resp.text, provider=self.name, model=model_name)
+                usage = getattr(resp, "usage_metadata", None)
+                llm = LLMResponse(
+                    text=resp.text,
+                    provider=self.name,
+                    model=model_name,
+                    prompt_tokens=getattr(usage, "prompt_token_count", 0) or 0,
+                    completion_tokens=getattr(usage, "candidates_token_count", 0) or 0,
+                    total_tokens=getattr(usage, "total_token_count", 0) or 0,
+                )
+                _record_usage(llm)
+                return llm
             except Exception as e:
                 msg = str(e).lower()
                 if any(k in msg for k in ("503", "unavailable", "overloaded", "high demand", "quota", "429", "resource_exhausted")):
@@ -130,11 +187,17 @@ class GroqProvider(_Provider):
             messages=messages,
             temperature=0.2,
         )
-        return LLMResponse(
+        usage = getattr(resp, "usage", None)
+        llm = LLMResponse(
             text=resp.choices[0].message.content,
             provider=self.name,
             model=model_name,
+            prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+            completion_tokens=getattr(usage, "completion_tokens", 0) or 0,
+            total_tokens=getattr(usage, "total_tokens", 0) or 0,
         )
+        _record_usage(llm)
+        return llm
 
 
 class OpenRouterProvider(_Provider):
@@ -174,11 +237,17 @@ class OpenRouterProvider(_Provider):
             messages=messages,
             temperature=0.2,
         )
-        return LLMResponse(
+        usage = getattr(resp, "usage", None)
+        llm = LLMResponse(
             text=resp.choices[0].message.content,
             provider=self.name,
             model=model_name,
+            prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+            completion_tokens=getattr(usage, "completion_tokens", 0) or 0,
+            total_tokens=getattr(usage, "total_tokens", 0) or 0,
         )
+        _record_usage(llm)
+        return llm
 
 
 class ModelRouter:

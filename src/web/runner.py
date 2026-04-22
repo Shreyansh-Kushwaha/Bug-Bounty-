@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from io import StringIO
 from pathlib import Path
 
+from src.current_run import set_run_id
 from src.orchestrator import new_run_context, run_pipeline
 from src.web import log_tee
 
@@ -120,6 +121,7 @@ class RunManager:
 
         def _worker():
             log_tee.set_buffer(status.log_buffer)
+            set_run_id(ctx.run_id)
             try:
                 run_pipeline(ctx, stop_after=stop_after)
                 if status.current_stage not in ("error", "aborted"):
@@ -135,6 +137,7 @@ class RunManager:
             finally:
                 status.finished_at = time.time()
                 log_tee.set_buffer(None)
+                set_run_id(None)
 
         threading.Thread(
             target=_worker, daemon=True, name=f"run-{ctx.run_id}"
